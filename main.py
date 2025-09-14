@@ -14,6 +14,8 @@ from typing import Optional
 from models.person import PersonCreate, PersonRead, PersonUpdate
 from models.address import AddressCreate, AddressRead, AddressUpdate
 from models.health import Health
+from models.order import OrderBase, OrderCreate, OrderRead
+from models.payment import PaymentBase, PaymentCreate, PaymentRead
 
 port = int(os.environ.get("FASTAPIPORT", 8000))
 
@@ -22,6 +24,8 @@ port = int(os.environ.get("FASTAPIPORT", 8000))
 # -----------------------------------------------------------------------------
 persons: Dict[UUID, PersonRead] = {}
 addresses: Dict[UUID, AddressRead] = {}
+orders: Dict[UUID, OrderRead] = {}
+payments: Dict[UUID, PaymentRead] = {}
 
 app = FastAPI(
     title="Person/Address API",
@@ -158,6 +162,121 @@ def update_person(person_id: UUID, update: PersonUpdate):
     stored.update(update.model_dump(exclude_unset=True))
     persons[person_id] = PersonRead(**stored)
     return persons[person_id]
+
+# -----------------------------------------------------------------------------
+# Order endpoints
+# -----------------------------------------------------------------------------
+@app.post("/orders", response_model=OrderRead)
+def create_order(order: OrderCreate, status_code=201):
+    # Generate the read model from the incoming create payload
+    order_read = OrderRead(**order.model_dump())
+    # Store it in the orders dictionary keyed by id
+    orders[order_read.id] = order_read
+    return order_read
+
+@app.get("/orders", response_model=List[OrderBase])
+def list_orders(
+    uni: Optional[str] = Query(None, description="Filter by customer's UNI"),
+    first_name: Optional[str] = Query(None, description="Filter by customer's first name"),
+    last_name: Optional[str] = Query(None, description="Filter by customer's last name"),
+    email: Optional[str] = Query(None, description="Filter by customer's email"),
+    phone: Optional[str] = Query(None, description="Filter by customer's phone number"),
+    item: Optional[str] = Query(None, description="Filter by item name"),
+    quantity: Optional[int] = Query(None, description="Filter by quantity"),
+    price_per_item: Optional[float] = Query(None, description="Filter by price per item"),
+    order_date: Optional[str] = Query(None, description="Filter by order date (YYYY-MM-DD)"),
+    city: Optional[str] = Query(None, description="Filter by city in customer's addresses"),
+    country: Optional[str] = Query(None, description="Filter by country in customer's addresses"),
+):
+    results = list(orders.values())
+
+    # Filter by flat order fields
+    if item is not None:
+        results = [o for o in results if o.item == item]
+    if quantity is not None:
+        results = [o for o in results if o.quantity == quantity]
+    if price_per_item is not None:
+        results = [o for o in results if o.price_per_item == price_per_item]
+    if order_date is not None:
+        results = [o for o in results if str(o.order_date) == order_date]
+
+    # Filter by nested customer fields
+    if uni is not None:
+        results = [o for o in results if o.customer and o.customer.uni == uni]
+    if first_name is not None:
+        results = [o for o in results if o.customer and o.customer.first_name == first_name]
+    if last_name is not None:
+        results = [o for o in results if o.customer and o.customer.last_name == last_name]
+    if email is not None:
+        results = [o for o in results if o.customer and o.customer.email == email]
+    if phone is not None:
+        results = [o for o in results if o.customer and o.customer.phone == phone]
+
+    # Filter by nested address fields
+    if city is not None:
+        results = [
+            o for o in results
+            if o.customer and any(addr.city == city for addr in o.customer.addresses)
+        ]
+    if country is not None:
+        results = [
+            o for o in results
+            if o.customer and any(addr.country == country for addr in o.customer.addresses)
+        ]
+
+    return results
+
+
+@app.get("/orders/{order_id}", response_model=OrderBase)
+def get_order(order_id: UUID):
+    if order_id not in orders:
+        raise HTTPException(status_code=404, detail="Order not found")
+    return orders[order_id]
+
+# -----------------------------------------------------------------------------
+# Payment endpoints
+# -----------------------------------------------------------------------------
+@app.post("/payments", response_model=PaymentRead, status_code=201)
+def create_payment(payment: PaymentCreate):
+    # Generate the read model from the incoming create payload
+    payment_read = PaymentRead(**payment.model_dump())
+    # Store it in the payments dictionary keyed by id
+    payments[payment_read.id] = payment_read
+    return payment_read
+
+@app.get("/payments", response_model=List[PaymentBase])
+def list_payments(
+    # Replace these filters with fields relevant to your Payment model
+    payment_method: Optional[str] = Query(None, description="Filter by payment method"),
+    status: Optional[str] = Query(None, description="Filter by payment status"),
+    amount: Optional[float] = Query(None, description="Filter by payment amount"),
+    currency: Optional[str] = Query(None, description="Filter by currency code"),
+    payer_id: Optional[UUID] = Query(None, description="Filter by payer ID"),
+    payment_date: Optional[str] = Query(None, description="Filter by payment date (YYYY-MM-DD)"),
+):
+    results = list(payments.values())
+
+    # Apply filters
+    if payment_method is not None:
+        results = [p for p in results if p.payment_method == payment_method]
+    if status is not None:
+        results = [p for p in results if p.status == status]
+    if amount is not None:
+        results = [p for p in results if p.amount == amount]
+    if currency is not None:
+        results = [p for p in results if p.currency == currency]
+    if payer_id is not None:
+        results = [p for p in results if p.payer_id == payer_id]
+    if payment_date is not None:
+        results = [p for p in results if str(p.payment_date) == payment_date]
+
+    return results
+
+@app.get("/payments/{payment_id}", response_model=PaymentBase)
+def get_payment(payment_id: UUID):
+    if payment_id not in payments:
+        raise HTTPException(status_code=404, detail="Payment not found")
+    return payments[payment_id]
 
 # -----------------------------------------------------------------------------
 # Root
